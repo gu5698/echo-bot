@@ -1,6 +1,5 @@
 from flask import Flask, request, abort, send_file
 import os
-from dotenv import load_dotenv
 
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
@@ -66,14 +65,11 @@ from linebot.v3.webhooks import (
 import requests
 import json
 
-# Load environment variables from .env file
-load_dotenv()
-
 app = Flask(__name__)
 
-CHANNEL_ACCESS_TOKEN = os.getenv('CHANNEL_ACCESS_TOKEN')
+CHANNEL_ACCESS_TOKEN = os.environ.get('CHANNEL_ACCESS_TOKEN')
 configuration = Configuration(access_token=CHANNEL_ACCESS_TOKEN)
-line_handler = WebhookHandler(os.getenv('CHANNEL_SECRET'))
+line_handler = WebhookHandler(os.environ.get('CHANNEL_SECRET'))
 
 
 @app.route("/callback", methods=["POST"])
