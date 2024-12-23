@@ -1,5 +1,6 @@
 from flask import Flask, request, abort, send_file
 import os
+from dotenv import load_dotenv
 
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
@@ -64,6 +65,9 @@ from linebot.v3.webhooks import (
 )
 import requests
 import json
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 
