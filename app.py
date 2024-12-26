@@ -61,15 +61,31 @@ from linebot.v3.webhooks import (
     FollowEvent,
     PostbackEvent,
     TextMessageContent,
+    LocationMessageContent
 )
 import requests
 import json
 
+# Azure Translation
+from azure.ai.translation.text import TextTranslationClient
+from azure.core.credentials import AzureKeyCredential
+from azure.core.exceptions import HttpResponseError
+
+#Azure CLU
+from azure.core.credentials import AzureKeyCredential
+from azure.ai.language.conversations import ConversationAnalysisClient
+
 app = Flask(__name__)
 
-CHANNEL_ACCESS_TOKEN = os.getenv('CHANNEL_ACCESS_TOKEN')
+CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN")
+CHANNEL_SECRET = os.getenv("CHANNEL_SECRET")
+clu_endpoint = os.getenv("CLU_ENDPOINT")
+clu_key = os.getenv("CLU_API_KEY")
+project_name = os.getenv("PROJECT_NAME")
+deployment_name = os.getenv("DEPLOYMENT_NAME")    
+
 configuration = Configuration(access_token=CHANNEL_ACCESS_TOKEN)
-line_handler = WebhookHandler(os.getenv('CHANNEL_SECRET'))
+line_handler = WebhookHandler(CHANNEL_SECRET)
 
 
 @app.route("/callback", methods=["POST"])
@@ -91,6 +107,153 @@ def callback():
         abort(400)
 
     return "OK"
+
+@line_handler.add(event=MessageEvent, message=LocationMessageContent)
+def handle_location_message(event):
+    address = event.message.address
+    result = analyze_address(address)
+    entities = result['prediction']['entities']
+
+    messages = []
+    if len(entities) == 2 and entities[0]['category'] == 'city' and entities[1]['category'] == 'town':
+        city = result['prediction']['entities'][0]['text']
+        town = result['prediction']['entities'][1]['text']
+        messages.append(TextMessage(text=f"你傳送的位址資訊的城市:{city}"))
+        messages.append(TextMessage(text=f"你傳送的位址資訊的鄉鎮:{town}"))
+    else:
+        messages.append(TextMessage(text="無法辨識你傳送的位址資訊"))
+
+    with ApiClient(configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        line_bot_api.reply_message_with_http_info(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=messages
+            )
+        )
+
+def analyze_address(address):
+    credential = AzureKeyCredential(clu_key)
+    client = ConversationAnalysisClient(clu_endpoint, credential)
+    with client:
+        result = client.analyze_conversation(
+            task={
+                "kind": "Conversation",
+                "analysisInput": {
+                    "conversationItem": {
+                        "participantId": "1",
+                        "id": "1",
+                        "modality": "text",
+                        "language": "zh-hant",
+                        "text": address
+                    },
+                    "isLoggingEnabled": False
+                },
+                "parameters": {
+                    "projectName": project_name,
+                    "deploymentName": deployment_name,
+                    "verbose": True
+                }
+            }
+        )
+    return result['result']
+
+@line_handler.add(MessageEvent, message=TextMessageContent)
+def handle_messsage(event):
+    text = event.message.text
+    quick_reply_items = [
+        QuickReplyItem(
+            action=PostbackAction(
+                label="英文", data=f"lang=en&text={text}", display_text="英文"
+            )
+        ),
+        QuickReplyItem(
+            action=PostbackAction(
+                label="日文", data=f"lang=ja&text={text}", display_text="日文"
+            )
+        ),
+        QuickReplyItem(
+            action=PostbackAction(
+                label="繁體中文",
+                data=f"lang=zh-Hant&text={text}",
+                display_text="繁體中文",
+            )
+        ),
+        QuickReplyItem(
+            action=PostbackAction(
+                label="文言文", data=f"lang=lzh&text={text}", display_text="文言文"
+            )
+        ),
+    ]
+    reply_message(
+        event,
+        [
+            TextMessage(
+                text="請選擇要翻譯的語言:",
+                quick_reply=QuickReply(items=quick_reply_items),
+            )
+        ],
+    )
+
+
+@line_handler.add(PostbackEvent)
+def handle_postback(event):
+    postback_data = event.postback.data
+    params = {}
+    for param in postback_data.split("&"):
+        key, value = param.split("=")
+        params[key] = value
+    user_input = params.get("text")
+    language = params.get("lang")
+    result = azure_translate(user_input, language)
+    reply_message(
+        event, [TextMessage(text=result if result else "No translation available")]
+    )
+
+
+# 回覆訊息
+def reply_message(event, messages):
+    with ApiClient(configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        line_bot_api.reply_message(
+            ReplyMessageRequest(reply_token=event.reply_token, messages=messages)
+        )
+
+
+# # 處理Azure翻譯
+def azure_translate(user_input, to_language):
+    if to_language == None:
+        return "Please select a language"
+    else:
+        apikey = os.getenv("API_KEY")
+        endpoint = os.getenv("ENDPOINT")
+        region = os.getenv("REGION")
+        credential = AzureKeyCredential(apikey)
+        text_translator = TextTranslationClient(
+            credential=credential, endpoint=endpoint, region=region
+        )
+
+        try:
+            response = text_translator.translate(
+                body=[user_input], to_language=[to_language]
+            )
+            print(response)
+            translation = response[0] if response else None
+            if translation:
+                detected_language = translation.detected_language
+                result = ""
+                if detected_language:
+                    print(
+                        f"偵測到輸入的語言: {detected_language.language} 信心分數: {detected_language.score}"
+                    )
+                for translated_text in translation.translations:
+                    result += f"翻譯成: '{translated_text.to}'\n結果: '{translated_text.text}'"
+                return result
+
+        except HttpResponseError as exception:
+            if exception.error is not None:
+                print(f"Error Code: {exception.error.code}")
+                print(f"Message: {exception.error.message}")
 
 
 def create_rich_menu_1():

@@ -1,2 +1,4 @@
 line-bot-sdk==3.7
 flask==3.0.0
+azure-ai-translation-text==1.0.0
+azure-ai-language-conversations==1.1.0
